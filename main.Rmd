@@ -1,0 +1,1368 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r}
+library(tximport)
+library(GenomicFeatures)
+library(readr)
+library(limma)
+library(edgeR)
+library(stageR)
+library(ggfortify)
+library(PCAtools)
+library(pca3d)
+library(rgl)
+library(gplots)
+library(goseq)
+library(org.At.tair.db)
+library(topGO)
+library(Rgraphviz)
+library(ggplot2)
+library(reshape2)
+library(ggpubr)
+library(data.table)
+library(devtools)
+library(gridExtra)
+library(grid)
+library(gtable)
+library(dplyr)
+library(biomaRt)
+library(ComplexHeatmap)
+library(circlize)
+
+library(reticulate)
+use_python("/home/mbp16mbd/miniconda3/bin/python3")
+
+source("modified_plotloadings.R")
+
+```
+
+```{r}
+dir<-"/mnt/uosfstore/sudlab1/General/projects/magda_RNAseq_MAIN/salmon_pipeline/quantification.dir"
+IDs<-list.files(path="/mnt/uosfstore/sudlab1/General/projects/magda_RNAseq_MAIN/salmon_pipeline/quantification.dir", pattern="*.sf")
+IDs
+```
+
+```{r}
+files<-file.path(dir, IDs) # in file.patch function you can use multiple arguments to structure your directory name. In here dir is you main bit of directory, IDs specify the second variable bit of directory and quant.sf specifies the last bit which is our count file
+names(files)<-substr(IDs, 1, 11) #gives names to our files which will be relevant later
+files[1:4]
+```
+
+```{r}
+all(file.exists(files)) #checks if you have all of the files it searched for
+```
+
+```{r}
+arb<-makeTxDbFromGFF("/mnt/uosfstore/sudlab1/General/projects/magda_organs_and_treatments_RNAseq/rnaseqdiffexpression_pipeline/Arabidopsis_thaliana.TAIR10.36.gtf.gz", format = "gtf") 
+#this is creating TxDb from a local file, also posible to create it from Biomart
+k<-keys(arb, keytype = "GENEID")
+df<-select(arb, keys=k, keytype = "GENEID", columns="TXNAME")
+tx2gene<-df[,2:1] #reverse order
+tx2gene[1:10,]
+write.csv(tx2gene, "../../Documents/transcript_mapping.csv", quote = F)
+```
+
+```{r}
+txi<-tximport(files, type="salmon", tx2gene = tx2gene, dropInfReps = TRUE, countsFromAbundance = "lengthScaledTPM") #dropInfReps gets rid of this error: "Error: package_version(minfo$salmon_version) >= "0.8.0" is not TRUE"
+```
+
+```{r}
+sampleTable <- data.frame(genotype = factor(rep(c("mes", "del", "epi", "WT"), each = 16)), time=factor(rep(rep(c("1H", "6H"), each=4), 8)), light=factor(rep(rep(c("high", "low"), each=8), 4)))
+sampleTable
+```
+```{r}
+subset<-txi$counts[rowSums(txi$counts)>15,] #removes rows which sum to less than 10 counts and creates a subset
+nrow(txi$counts)
+nrow(subset)
+```
+```{r}
+y1 <- DGEList(subset)
+y1[[2]]
+```
+
+```{r}
+cpm<-cpm(y1)
+keep.exprs<-rowSums(cpm>1)>=2
+y2<-y1[keep.exprs, keep.lib.sizes=FALSE]
+print("No. of genes removed")
+nrow(y1[[1]])-nrow(y2[[1]])
+print("No. of genes left")
+nrow(y2[[1]])
+```
+```{r}
+y2 <- calcNormFactors(y2, method = "TMM")
+```
+
+```{r}
+design <- model.matrix(~genotype*time*light, data = sampleTable) #recipe for this design from tximport manual
+v1 <- voom(y1, design, plot=TRUE) #values before library normalisation
+v2 <- voom(y2, design, plot=TRUE) #values after library size normalisation
+```
+
+```{r}
+plotMDS(v2, labels=rep(seq(1,16), each=4), col=rep(rainbow(16), each=4))
+```
+
+
+```{r}
+boxplot(v1@.Data[[2]]) #plot of expression values (E - aka cpm in edgeR) before normalisation
+boxplot(v2@.Data[[2]]) # -//- after normalisation
+
+#check difference between smallest and largest library is less than 3-fold
+max(y2@.Data[[2]]$lib.size)/min(y2@.Data[[2]]$lib.size)-1
+```
+
+```{r}
+TS<-paste(sampleTable$genotype, sampleTable$time, sampleTable$light, sep=".")
+TS<-factor(TS, levels=unique(TS))
+
+design2<-model.matrix(~0+TS)
+colnames(design2)<-levels(TS) #recipe for this TS and design from limma manual
+design2[,1:6]
+```
+```{r}
+fit0<-lmFit(v2, design2)
+fit.matrix<-as.matrix(fit0)
+contrast.matrix0<-makeContrasts(WT1=WT.1H.high-WT.1H.low, WT6=WT.6H.high-WT.6H.low, MES1=mes.1H.high-mes.1H.low, MES6=mes.6H.high-mes.6H.low, EPI1=epi.1H.high-epi.1H.low, EPI6=epi.6H.high-epi.6H.low, DEL1=del.1H.high-del.1H.low, DEL6=del.6H.high-del.6H.low, levels = design2)
+fit0<-contrasts.fit(fit0, contrast.matrix0)
+fit0<-eBayes(fit0, trend = T)
+fit.matrix0<-as.matrix(fit0)
+head(fit.matrix)
+head(fit.matrix0)
+```
+```{r}
+genotype<-factor(rep(c("MES", "DEL", "EPI", "WT"), each = 16), levels=c("WT", "EPI", "MES", "DEL"))
+time<-factor(rep(rep(c("1H", "6H"), each=4), 8), levels=c("1H", "6H"))
+light<-factor(rep(rep(c("HIGH", "LOW"), each=8), 4), levels=c("LOW", "HIGH"))
+
+
+design3<-model.matrix(~(genotype:time)*(light:time))
+rownames(design3)<- paste0(rep(levels(TS), each=4), rep(c(1:4), 16)) #recipe for this TS and design from limma manual
+colnames(design3)<-gsub(":", "x", colnames(design3))
+design3<-design3[,-c(2,6)]
+design3
+```
+```{r}
+contrast.matrix3<-makeContrasts(time1HxlightHIGH, time1HxlightHIGH+genotypeEPIxtime1HxlightHIGH, time1HxlightHIGH+genotypeMESxtime1HxlightHIGH, time1HxlightHIGH+genotypeDELxtime1HxlightHIGH, genotypeEPIxtime1HxlightHIGH, genotypeMESxtime1HxlightHIGH, genotypeDELxtime1HxlightHIGH, time6HxlightHIGH, time6HxlightHIGH+genotypeEPIxtime6HxlightHIGH, time6HxlightHIGH+genotypeMESxtime6HxlightHIGH, time6HxlightHIGH+genotypeDELxtime6HxlightHIGH, genotypeEPIxtime6HxlightHIGH, genotypeMESxtime6HxlightHIGH, genotypeDELxtime6HxlightHIGH, levels=design3)
+contrast.matrix3
+```
+
+
+```{r}
+colnames(y2)<-rownames(design3)
+v2 <- voom(y2, design3, plot=F)
+
+fit<-lmFit(v2, design3)
+fit3<-eBayes(fit, trend=TRUE)
+fit.matrix3<-as.matrix(fit3)
+head(fit.matrix3)
+```
+
+```{r}
+fit2<-contrasts.fit(fit, contrast.matrix3)
+fit2<-eBayes(fit2)
+fit.matrix2<-as.matrix(fit2)
+head(fit.matrix2)
+```
+```{r}
+res <- decideTests(fit2)
+colSums(summary.TestResults(res)[c(1,3),])
+summary.TestResults(res)
+```
+
+```{r}
+alpha <- 0.01
+nGenes <- nrow(y2)
+tableF <- topTableF(fit2, number=nGenes, sort.by="none") #screening hypothesis
+pScreen <- tableF$P.Value
+names(pScreen) = rownames(tableF)
+nGenes
+tableF[1:10,]
+
+```
+```{r}
+pConfirmation <- sapply(1:14,function(i) topTable(fit2, coef=i, number=nGenes, sort.by="none")$P.Value)
+dimnames(pConfirmation) <- list(rownames(fit2), colnames(contrast.matrix3))
+stageRObj <- stageR(pScreen=pScreen, pConfirmation=pConfirmation, pScreenAdjusted=FALSE)
+stageRObj <- stageWiseAdjustment(object=stageRObj, method="none", alpha=0.01)
+head(getAdjustedPValues(stageRObj, onlySignificantGenes=FALSE, order=FALSE))
+```
+```{r}
+head(getAdjustedPValues(stageRObj, onlySignificantGenes=TRUE, order=TRUE))
+```
+```{r}
+resAfter <- getResults(stageRObj)
+head(resAfter)
+```
+```{r}
+colnames(resAfter)[2:15]<-colnames(contrast.matrix3)
+colSums(resAfter)
+```
+
+```{r}
+all_diff<-lapply(c(5,6,7,12,13,14), function(x){
+  y<-topTable(fit2, coef=x, number = Inf)[rownames(resAfter[resAfter[,x+1]==1,]),]
+  y<-y[complete.cases(y),]
+})
+names(all_diff)<-colnames(resAfter)[c(6,7,8,13,14,15)]
+
+fit_diff<-lapply(all_diff, function(x){
+  fit.matrix0[rownames(fit.matrix0) %in% rownames(x),]
+  })
+
+all_diffs<- unique(unlist(lapply(all_diff, rownames)))
+
+
+write.table(sapply(all_diffs, paste0, " 1"), "../../Documents/phyb_dependent_diff.txt", sep = "\n", row.names = F, quote = F)
+write.table(sapply(all_diffs, paste0, " red"), "../../Documents/phyb_dependent_diff_KEGG.txt", sep = "\n", row.names = F, quote = F)
+```
+
+```{r}
+pca<-prcomp(t(fit.matrix0[all_diffs,c(1,3,5,7)]))
+pca6<-prcomp(t(fit.matrix0[all_diffs,c(2,4,6,8)]))
+autoplot(prcomp(t(fit.matrix0[all_diffs,c(1,3,5,7)])), label=T, shape=F)
+autoplot(prcomp(t(fit.matrix0[all_diffs,c(2,4,6,8)])), label=T, shape=F)
+summary(pca)
+summary(pca6)
+```
+
+```{r}
+pca1h<-pca(fit.matrix0[,c(1,3,5,7)])
+pca6h<-pca(fit.matrix0[,c(2,4,6,8)])
+colke1<-c(WT1="red", EPI1="purple", MES1="blue", DEL1="black")
+colke6<-c(WT6="red", EPI6="purple", MES6="blue", DEL6="black")
+
+p1<-pairsplot(pca1h, components = getComponents(pca1h, seq_len(3)), colkey=colke1, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
+p2<-pairsplot(pca6h, components = getComponents(pca6h, seq_len(3)), colkey=colke6, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
+pF<-arrangeGrob(p1,p2, nrow=1, padding = unit(0, "line"))
+ggsave("../../Documents/PCAplot.png", pF, width = 26, height = 10, unit = "in")
+p1
+p2
+```
+```{r}
+Dpca1h<-pca(fit.matrix0[all_diffs,c(1,3,5,7)])
+Dpca6h<-pca(fit.matrix0[all_diffs,c(2,4,6,8)])
+Dcolke1<-c(WT1="red", EPI1="purple", MES1="blue", DEL1="black")
+Dcolke6<-c(WT6="red", EPI6="purple", MES6="blue", DEL6="black")
+
+p1<-pairsplot(Dpca1h, components = getComponents(Dpca1h, seq_len(3)), colkey=Dcolke1, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
+p2<-pairsplot(Dpca6h, components = getComponents(Dpca6h, seq_len(3)), colkey=Dcolke6, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
+pF<-arrangeGrob(p1,p2, nrow=1, padding = unit(0, "line"))
+ggsave("../../Documents/PCAplotDiffs.png", pF, width = 26, height = 10, unit = "in")
+p1
+p2
+```
+
+```{r, fig.height=8}
+AtSYMBOL<-as.list(org.At.tairSYMBOL)
+named.fit<-fit.matrix0[,c(1,3,5,7,2,4,6,8)]
+rownames(named.fit)<-sapply(rownames(named.fit), function(x){
+  if(is.na(AtSYMBOL[x]) || is.null(AtSYMBOL[[x]])){
+    return(x)
+  } else{
+    return(AtSYMBOL[[x]][1])
+  }
+})
+pca1.named<-pca(named.fit[,1:4])
+pca6.named<-pca(named.fit[,5:8])
+p1<-plotloadingsMD(pca1.named, components = getComponents(pca1.named, seq_len(3)), col=c("blue", "white", "red"), rangeRetain = 0.08, title = "Most loaded all genes for PC at 1H", labSize = 3) +
+    theme(plot.title = element_text(hjust = 0.5))
+p2<-plotloadingsMD(pca6.named, components = getComponents(pca6.named, seq_len(3)), col=c("blue", "white", "red"), rangeRetain = 0.08, title ="Most loaded all genes for PC at 6H", labSize = 3) +
+    theme(plot.title = element_text(hjust = 0.5))
+pF<-arrangeGrob(p1, p2, nrow = 1)
+ggplot2::ggsave("../../Documents/loadedNonDiff.png", pF, width = 14, height=7, units = "in")
+
+p1
+p2
+
+Dnamed.fit<-fit.matrix0[all_diffs,c(1,3,5,7,2,4,6,8)]
+rownames(Dnamed.fit)<-sapply(rownames(Dnamed.fit), function(x){
+  if(is.na(AtSYMBOL[x]) || is.null(AtSYMBOL[[x]])){
+    return(x)
+  } else{
+    return(AtSYMBOL[[x]][1])
+  }
+})
+Dpca1.named<-pca(Dnamed.fit[,1:4])
+Dpca6.named<-pca(Dnamed.fit[,5:8])
+p3<-plotloadingsMD(Dpca1.named, components = getComponents(Dpca1.named, seq_len(3)), col=c("blue", "white", "red"), rangeRetain = 0.08, title = "Most loaded diff genes for PC at 1H", labSize = 3) +
+    theme(plot.title = element_text(hjust = 0.5))
+p4<-plotloadingsMD(Dpca6.named, components = getComponents(Dpca6.named, seq_len(3)), col=c("blue", "white", "red"), rangeRetain = 0.08, title ="Most loaded diff genes for PC at 6H", labSize = 3) +
+    theme(plot.title = element_text(hjust = 0.5))
+DpF<-arrangeGrob(p3, p4, nrow = 1)
+ggplot2::ggsave("../../Documents/loadedDiff.png", DpF, width = 14, height=7, units = "in")
+
+p3
+p4
+
+```
+
+```{r}
+addData<-function(df, sors, nm){
+  id<-character()
+  sapply(seq(1, nrow(df)), function(y){
+    if(rownames(df)[y] %in% names(sors)){
+      id[y]<<-sors[(rownames(df)[y])][[1]][1]
+    }else{
+      id[y]<<-"NA"
+    }
+  })
+  df$name<-id
+  colnames(df)[colnames(df) == "name"]<-nm
+  return(df)
+}
+
+symbol<-org.At.tairSYMBOL
+mapped_genes<-mappedkeys(symbol)
+symbol<-as.list(symbol[mapped_genes])
+
+descr<-org.At.tairGENENAME
+mapped_genes<-mappedkeys(descr)
+descr<-as.list(descr[mapped_genes])
+```
+
+```{r}
+boundpca<-cbind(Dpca1h$loadings[,1:3], Dpca6h$loadings[,1:3])
+boundpca$names<-rownames(boundpca)
+loadFrame<-lapply(seq(1:6), function(x){
+    y<-as.data.frame(boundpca[order(abs(boundpca[,x]), decreasing = T),])
+    return(y[1:20,c(7,x)])
+})
+
+loadInfo<-lapply(loadFrame, addData, symbol, "SYM")
+loadInfo<-lapply(loadInfo, addData, descr, "ROLE")
+loadInfo<-lapply(loadInfo, function(x){
+    x$ROLE<-sapply(x$ROLE, gsub, pattern = '(.{1,180})(\\s|$)', replacement = '\\1\n')
+    x$ROLE<-sapply(x$ROLE, gsub, pattern = '.{1}$', replacement = '')
+    return(x)
+})
+```
+
+```{r}
+nam<-rep(c("1H", "6H"), each = 3)
+g<-lapply(seq(1:length(loadInfo)), function(x){
+    ret<- tableGrob(loadInfo[[x]], rows = NULL, theme = ttheme_default(base_size=9))
+    title<-textGrob(paste("loadings for", colnames(loadInfo[[x]])[2], nam[x]), gp = gpar(fontsize=16))
+    padding<-unit(5, 'mm')
+    ret2<-gtable_add_rows(ret, heights = grobHeight(title) + padding, pos = 0)
+    ret3<-gtable_add_grob(ret2,title, 1,1,1, ncol(ret2))
+    return(ret3)
+})
+
+
+m<-marrangeGrob(grobs=g, nrow=1, ncol =1)
+lapply(seq(1:6), function(x){
+    ggsave(filename = paste0("../../Documents/", "loadings", colnames(loadInfo[[x]])[2], nam[x], ".png"), m[[x]], width = 14, height = 8, units = "in")
+})
+```
+
+
+```{r}
+water.loadings1<-data.frame(abs(pca1.named$loadings), NAME=rownames(pca1.named$loadings))
+
+water.loadings6<-data.frame(pca6.named$loadings, NAME=rownames(pca6.named$loadings))
+
+loadingsByPC<-lapply(seq(1:3), function(x){
+    wat<<-water.loadings1[order(-water.loadings1[,x]),]
+    wat$NAME<-factor(wat$NAME, levels=wat$NAME)
+    p<-ggplot(wat, aes(NAME, wat[,x])) +
+        geom_col() +
+        ylim(0, 0.2) +
+        theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+    print(p)
+    loadn<-as.data.frame(wat)[wat[,x]>0.05,x]
+    names(loadn)<-rownames(wat)[1:length(loadn)]
+    return(loadn)
+})
+```
+
+```{r}
+plot3d(pca1h$rotated[,1:3], col = c("red", "blue", "purple", "black"), size=2, type="s", axes=F)
+text3d(pca1h$rotated[,1:3],texts=rownames(pca1h$rotated), adj = 2)
+axes3d(
+    edges=c('x--', 'y+-', 'z--'),
+    labels=T
+)
+box3d()
+```
+```{r}
+# dir.create("PCA_animation")
+# dir()
+```
+```{r}
+# Angle1 <- 5 
+# Angle <- rep(Angle1 * pi / 180, 360/Angle1) 
+# sum(Angle*180/pi)
+# 
+# PCA_animation.dir <- paste(getwd(), "/PCA_animation", sep="") 
+# PCA_animation.dir
+# 
+# 
+# for (i in seq(Angle)) {
+#   view3d(userMatrix = rotate3d(par3d("userMatrix"),
+#   Angle[i], 0, 0, 1))
+#   rgl.snapshot(filename=paste(paste(PCA_animation.dir, "/frame-", sep=""),
+#   sprintf("%03d", i), ".png", sep="")) }
+```
+
+```{r}
+# move.to.animation.dir <- paste("cd", PCA_animation.dir, "&&")
+# move.to.animation.dir
+```
+```{r}
+# ImageMagick.code <- paste("convert -delay ", 5, " -loop 0 frame*.png animated.gif", sep="")
+# ImageMagick.code
+```
+```{r}
+# system(paste(move.to.animation.dir, ImageMagick.code))
+```
+
+```{r}
+
+testResultWT1<-resAfter[unique(unlist(lapply(fit_diff, rownames)[1:3])),c(6,7,8)]
+countsVenn<-vennCounts(testResultWT1)
+colnames(countsVenn)<-c("Epithelium", "Mesophyll", "Mutant", "Counts")
+vennDiagram(countsVenn)
+
+testResultWT6<-resAfter[unique(unlist(lapply(fit_diff, rownames)[4:6])),c(13,14,15)]
+countsVenn6<-vennCounts(testResultWT6)
+colnames(countsVenn6)<-c("Epithelium", "Mesophyll", "Mutant", "Counts")
+vennDiagram(countsVenn6)
+```
+```{r}
+
+distCor <- function(x) as.dist(1-cor(t(x)))
+cont.of.intrest<-fit.matrix0[rownames(fit.matrix0) %in% all_diffs,]
+heatmap.2(cont.of.intrest, scale="row", trace="none", col=colorRampPalette(c("blue", "white", "red")), dendrogram = "column", labRow=FALSE, cexCol=0.8, main = "Diff", distfun = distCor)
+
+chosen<-fit.matrix0[which(rownames(fit.matrix0) %in% c("AT1G04110", "AT5G53210", "AT3G06120", "AT3G24140", "AT1G34245", "AT3G26744", "AT4G31805", "AT1G19850", "AT5G11260", "AT2G42870", "AT2G43010")),]
+rownames(chosen)<-c("STOM", "SPCH", "MUTE", "FAMA", "EPF2", "SCRM", "POLAR", "MP", "HY5", "PAR1", "PIF4")
+
+
+heatmap.2(chosen, scale="none", trace="none", col=colorRampPalette(c("blue", "white", "red")), dendrogram = "column", cexCol=0.8, main = "Changes in Selected Genes brought \nby transfer from Low to High light", distfun = distCor)
+
+```
+```{r}
+normToWT<-fit.matrix0[rownames(fit.matrix0) %in% all_diffs,]
+normToWT<-matrix(unlist(lapply(seq(1:ncol(normToWT)), function(x){
+  if(x %in% c(1,3,5,7)){
+    normToWT[,x]-normToWT[,1]
+  }
+  else{
+    normToWT[,x]-normToWT[,2]
+  }
+})), ncol = ncol(normToWT))
+rownames(normToWT)<-rownames(fit.matrix0[rownames(fit.matrix0) %in% all_diffs,])
+colnames(normToWT)<-colnames(fit.matrix0[,])
+heatmap.2(normToWT[,c(3,4,5,6,7,8)], scale="none", trace="none", col=colorRampPalette(c("blue", "white", "red")), dendrogram = "column", labRow=FALSE, cexCol=0.8, main = "Diff", distfun = distCor, breaks = seq(-1,1, length.out = 12))
+
+heatmap.2(fit.matrix0[rownames(fit.matrix0) %in% all_diffs,], scale="row", trace="none", col=colorRampPalette(c("blue", "white", "red")), dendrogram = "column", labRow=FALSE, cexCol=0.8, main = "Diff", distfun = distCor)
+```
+
+
+```{r}
+AtGO<-as.list(org.At.tairGO)
+AtGO<-lapply(AtGO, names) #converts the object into a named list, where the names are the probe ID and a list entry is a character string of GO IDs (the ones to which a probe ID is annotated)
+str(AtGO[1:10])
+```
+
+```{r}
+geneUniverse <- rownames(fit.matrix0)
+genesOfInterest<-all_diffs
+geneList <- factor(as.integer(geneUniverse %in% genesOfInterest)) #this object needs to be a named factor
+names(geneList) <- geneUniverse
+geneList[1:60]
+```
+```{r}
+genes<-GenomicFeatures::genes(arb)
+length<-factor(width(genes))
+names(length)<-unique(df$GENEID)
+length<-subset(length, names(length) %in% names(geneList))
+length[1:60]
+```
+```{r}
+
+probs=length(genesOfInterest)/length(geneUniverse)
+testList<-sample(c(0,1), size=length(geneUniverse), replace = T)
+names(testList)<-geneUniverse
+pwf<-nullp(geneList, bias.data = length)
+nullp(testList, bias.data = length)
+```
+```{r}
+plot(length[all_diffs])
+plot(length)
+```
+
+
+
+```{r}
+avexprs<-factor(pmax(fit@.Data[[8]],0))
+pwf3<-nullp(geneList, bias.data = avexprs)
+```
+
+```{r}
+GO.wall<-goseq(pwf, gene2cat=AtGO, test.cats = "GO:BP")
+GO.wall[1:30,]
+```
+
+
+```{r}
+GO.wall3<-goseq(pwf3, gene2cat=AtGO, test.cats = "GO:BP")
+GO.wall3[1:30,]
+```
+
+```{r}
+#goseq analysis for separate conditions
+
+m.genesOfInterest<-lapply(all_diff, rownames)[-c(3,6)]
+m.geneList <- lapply(seq(1, length(m.genesOfInterest)), function(x){
+  y<-factor(as.integer(geneUniverse %in% m.genesOfInterest[[x]])) #this object needs to be a named factor
+  names(y)<-geneUniverse
+  return(y)
+})
+
+
+m.pwf<-lapply(m.geneList, nullp, bias.data=avexprs)
+m.GO.wall<-lapply(m.pwf, goseq, gene2cat=AtGO, test.cats="GO:BP")
+lapply(m.GO.wall, function(x){
+  as.data.frame(x)[1:20,]
+})
+```
+
+```{r}
+#goseq analysis for most loaded genes
+
+water.l1<-data.frame(abs(pca1h$loadings), NAME=rownames(pca1h$loadings))
+water.l6<-data.frame(abs(pca6h$loadings), NAME=rownames(pca6h$loadings))
+Dwater.l1<-data.frame(abs(Dpca1h$loadings), NAME=rownames(Dpca1h$loadings))
+Dwater.l6<-data.frame(abs(Dpca6h$loadings), NAME=rownames(Dpca6h$loadings))
+waterF<-cbind(water.l1, water.l6)
+DwaterF<-cbind(Dwater.l1, Dwater.l6)
+waterF<-waterF[,c(1,6,2,7,3,8,5)]
+DwaterF<-DwaterF[,c(1,6,2,7,3,8,5)]
+
+loadingsByPC.2<-lapply(seq(1:6), function(x){
+    wat<-waterF[order(-waterF[,x]),]
+    wat$NAME<-factor(wat$NAME, levels=wat$NAME)
+    loadn<-as.data.frame(wat)[wat[,x]>0.05,x]
+    names(loadn)<-rownames(wat)[1:length(loadn)]
+    return(loadn)
+})
+
+loadingsByPC.3<-lapply(seq(1:6), function(x){
+    Dwat<-DwaterF[order(-DwaterF[,x]),]
+    Dwat$NAME<-factor(Dwat$NAME, levels=Dwat$NAME)
+    loadn<-as.data.frame(Dwat)[Dwat[,x]>0.05,x]
+    names(loadn)<-rownames(Dwat)[1:length(loadn)]
+    return(loadn)
+})
+
+loadingsByPC.2<-c(loadingsByPC.2, loadingsByPC.3)
+
+l.genesOfInterest<-lapply(loadingsByPC.2, names)
+l.geneList <- lapply(seq(1, length(l.genesOfInterest)), function(x){
+  y<-factor(as.integer(geneUniverse %in% l.genesOfInterest[[x]])) #this object needs to be a named factor
+  names(y)<-geneUniverse
+  return(y)
+})
+
+
+l.pwf<-lapply(l.geneList, nullp, bias.data=avexprs)
+l.GO.wall<-lapply(l.pwf, goseq, gene2cat=AtGO, test.cats="GO:BP")
+lapply(l.GO.wall, function(x){
+  as.data.frame(x)[1:20,]
+})
+
+namesGO.wall<-rep(c("PC1 1H", "PC1 6H", "PC2 1H", "PC2 6H", "PC3 1H", "PC3 6H"), 2)
+add.n<-": most loaded genes separating "
+add.names<-rep(rep(c("DEL", "MES", "EPI"), each = 2), 2)
+add.diff<-rep(c(" for all genes", " for diff genes"), each = 6)
+names(l.GO.wall)<-sapply(seq(1:length(namesGO.wall)), function(x){
+    y<-paste(namesGO.wall[x], add.n, add.names[x], add.diff[x], sep = "")
+    return(y)
+})
+
+g<-lapply(seq(1:length(l.GO.wall)), function(x){
+    ret<- tableGrob(l.GO.wall[[x]][1:15,c(1,2,4,5,6)], rows = NULL, theme = ttheme_default(base_size=9))
+    title<-textGrob(names(l.GO.wall)[x], gp = gpar(fontsize=16))
+    padding<-unit(5, 'mm')
+    ret2<-gtable_add_rows(ret, heights = grobHeight(title) + padding, pos = 0)
+    ret3<-gtable_add_grob(ret2,title, 1,1,1, ncol(ret2))
+    return(ret3)
+})
+
+
+m<-marrangeGrob(grobs=g, nrow=2, ncol =1)
+nam<-c("PC1_ALL", "PC2_ALL", "PC3_ALL", "PC1_DIFF", "PC2_DIFF", "PC3_DIFF")
+lapply(seq(1:6), function(x){
+    ggsave(filename = paste0("../../Documents/", "GO", nam[x], ".png"), m[[x]], width = 12, height = 10, units = "in")
+})
+```
+
+```{r}
+AtGO2TAIR<-as.list(org.At.tairGO2TAIR)
+AtGO2TAIR<-lapply(AtGO2TAIR, unname)
+methGenes<-AtGO2TAIR[["GO:0001510"]] # genes labelled as RNA methylation
+AtGO2TAIR[["GO:0001510"]]
+```
+
+lets look into auxin in PC1
+```{r}
+auxin_gos<-c("GO:0009733", "GO:0009851", "GO:0010252")
+auxin_all<-unique(unlist(sapply(auxin_gos, function(x) AtGO2TAIR[[x]])))
+auxin_diff<-auxin_all[auxin_all %in% unlist(l.genesOfInterest)]
+names(auxin_diff)<-c("IAA5", "JAZ5", "5PTASEII", "ANAC19", "SAUR10", "ACC4", "GH3.3", "RVE8", "MDAR3", "AT3G25880", "BT2", "MYB74", "SAUR34", "IAA29", "CCD8", "PIPL3", "GH3.2", "CYP75B1", "SAUR69", "RVE1", "SAUR19", "CIR1", "YUC3", "YUC8", "YUC5")
+auxin_diff
+```
+```{r, fig.height=6}
+auxin.matrix<-fit.matrix[auxin_diff,c(3,1,4,2,7,5,8,6,11,9,12,10,15,13,16,14)]
+rownames(auxin.matrix)<-names(auxin_diff)
+
+ht1<- Heatmap(
+  auxin.matrix, 
+  name="auxin1", 
+  col = c("blue", "white", "red"),
+  clustering_distance_rows = "pearson",
+  cluster_columns = FALSE,
+  column_title = "conditions", 
+  column_title_side = "bottom", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(9, "cm"), 
+  row_names_gp = gpar(fontsize = 8),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "expression", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+draw(ht1)
+```
+```{r, fig.width=12, fig.height=6}
+auxin.matrix0<-fit.matrix0[auxin_diff,]
+rownames(auxin.matrix0)<-names(auxin_diff)
+
+ht2<- Heatmap(
+  auxin.matrix0, 
+  name="auxin2", 
+  col = c("blue", "white", "red"),
+  clustering_distance_rows = "pearson",
+  column_title = "Auxin GO category genes most loaded for PC1 diff", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(9, "cm"), 
+  row_names_gp = gpar(fontsize = 8),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "expression", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+auxin.matrix0.scaled<- cbind(t(scale(t(auxin.matrix0[,c(1,5,3,7)]))), t(scale(t(auxin.matrix0[,c(2,6,4,8)]))))
+
+ht3<- Heatmap(
+  auxin.matrix0.scaled, 
+  name="auxin2", 
+  col = c("blue", "white", "red"),
+  clustering_distance_rows = "pearson",
+  column_split = c(rep("1H", 4), rep("6H", 4)),
+  column_title = "Auxin GO category genes most loaded for PC1 diff, row scaled", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(9, "cm"), 
+  row_names_gp = gpar(fontsize = 8),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "expression", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+gb_ht2 = grid.grabExpr(draw(ht2))
+gb_ht3 = grid.grabExpr(draw(ht3))
+
+grid.newpage()
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("right", "top")))
+grid.draw(gb_ht2)
+popViewport()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("left", "top")))
+grid.draw(gb_ht3)
+popViewport()
+
+auxin_low<-fit.matrix[auxin_diff,c(seq(3,16,4), seq(4,16,4))]
+rownames(auxin_low)<-names(auxin_diff)
+
+ht4<- Heatmap(
+  auxin_low, 
+  name="auxin_low", 
+  col = c("blue", "white", "red"),
+  clustering_distance_rows = "pearson",
+  column_title ="Expression of auxin genes at low light", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  cluster_columns = FALSE,
+  column_split = rep(c("1H", "6H"), each = 4),
+  width = unit(9, "cm"), 
+  height = unit(9, "cm"), 
+  row_names_gp = gpar(fontsize = 8),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "expression", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+auxin_lowScaled<-cbind(t(scale(t(auxin_low[,1:4]))), t(scale(t(auxin_low[,5:8]))))
+
+ht5<- Heatmap(
+  auxin_lowScaled, 
+  name="auxin_low", 
+  col = c("blue", "white", "red"),
+  clustering_distance_rows = "pearson",
+  column_title ="Scaled expression of auxin genes at low light", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  cluster_columns = FALSE,
+  column_split = rep(c("1H", "6H"), each = 4),
+  width = unit(9, "cm"), 
+  height = unit(9, "cm"), 
+  row_names_gp = gpar(fontsize = 8),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "expression", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+
+gb_ht4 = grid.grabExpr(draw(ht4))
+gb_ht5 = grid.grabExpr(draw(ht5))
+
+grid.newpage()
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("right", "top")))
+grid.draw(gb_ht4)
+popViewport()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("left", "top")))
+grid.draw(gb_ht5)
+popViewport()
+```
+```{r}
+fit.init<-lmFit(v2, design2)
+init.matrix<-as.matrix(fit.init)
+contrast.base<-makeContrasts(EPI1=epi.1H.low-WT.1H.low, MES1=mes.1H.low-WT.1H.low, DEL1=del.1H.low-WT.1H.low, EPI6=epi.6H.low-WT.6H.low, MES6=mes.6H.low-WT.6H.low, DEL6=del.6H.low-WT.6H.low, levels = design2)
+
+fit.cont.base<-contrasts.fit(fit.init, contrast.base)
+fit.cont.base<-eBayes(fit.cont.base, trend = T)
+fit.base.matrix<-as.matrix(fit.cont.base)
+
+is.de<-function(limmaCoef){
+    sapply(limmaCoef, function(x){
+        if(x < 0.05){
+            y<-"DE"
+        } else {
+            y<-"nonDE"
+        }
+        return(y)
+    })
+}
+
+png(filename = "../../Documents/MAplots.png", height = 800, width = 800)
+par(mfrow=c(3,2))
+sapply(c(1,4,2,5,3,6), function(x) limma::plotMA(fit.cont.base, status = is.de(fit.cont.base$p.value[,x]), coef = x, cex = 0.2))
+dev.off()
+
+sapply(c(1,4,2,5,3,6), function(x) limma::plotMA(fit.cont.base, status = is.de(fit.cont.base$p.value[,x]), coef = x, cex = 0.2))
+```
+
+```{r}
+base.matrix<-init.matrix[,c(15,11,3,7,16,12,4,8)]
+head(base.matrix)
+head(fit.base.matrix)
+```
+```{r}
+res.base <- decideTests(fit.cont.base, p.value = 0.05, lfc = 1)
+colSums(summary.TestResults(res.base)[c(1,3),])
+summary.TestResults(res.base)
+```
+```{r}
+base.diff.toptable<-topTable(fit.cont.base, p.value = 0.05, lfc=1, number = Inf)
+base.diff<-base.diff.toptable[,c(1:6)]
+head(base.diff)
+```
+```{r, fig.height=12}
+fcol<-colorRamp2(c(-4, 0, 4), c("blue", "white", "red"))
+
+fht<- Heatmap(
+  as.matrix(base.diff), 
+  name="all.base.diff", 
+  col = fcol,
+  clustering_distance_rows = "pearson",
+  column_split = c(1,1,1,6,6,6),
+  column_title = "Differentially expressed genes \n at steady state low light, as compared to respective WT", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(26, "cm"), 
+  show_row_names = FALSE,
+  border = TRUE, 
+  heatmap_legend_param = list(title = "LFC", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+gb_fht = grid.grabExpr(draw(fht))
+
+grid.newpage()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 1, just = c("center", "top")))
+grid.draw(gb_fht)
+popViewport()
+```
+```{r}
+digitiseDE<-function(diff.frame){
+    apply(diff.frame, c(1,2), function(x){
+        if(x < (-1)){
+            y<- (-1)
+        } else if(x > 1){
+            y<- 1
+        } else {
+            y<- 0
+        }
+        return(y)
+    })
+}
+
+digit.base.diff<- digitiseDE(base.diff)
+
+digit.count<-apply(digit.base.diff, 2, plyr::count)
+digit.count<-lapply(digit.count, function(x){
+    y<-x
+    rownames(y)<-y[,1]
+    y<-x[,-1]
+    return(y)
+})
+digit.count<-do.call("rbind", digit.count)
+colnames(digit.count)<- c("down", "no change", "up")
+
+digit.count
+```
+```{r, fig.height=12}
+dcol<-c("-1" = "blue", "0" = "white", "1" = "red")
+
+dht<- Heatmap(
+  as.matrix(digit.base.diff), 
+  name="digit.all.base.diff", 
+  col = dcol,
+  column_split = c(1,1,1,6,6,6),
+  column_title = "Digitised expression of DE genes \n at steady state low light, as compared to respective WT", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(26, "cm"), 
+  show_row_names = FALSE,
+  border = TRUE, 
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE,
+  heatmap_legend_param = list(title = "change", at = c("1", "-1", "0"), labels = c("up", "down", "no change"), border = "black")
+  )
+
+gb_dht = grid.grabExpr(draw(dht))
+
+grid.newpage()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 1, just = c("center", "top")))
+grid.draw(gb_dht)
+popViewport()
+```
+
+THIS CHUNK DOESNT WORK YET
+```{r}
+mes.base.diff<-lapply(c(2,5), function(x) topTable(fit.cont.base, p.value = 0.05, lfc=1, number = Inf, coef = x))
+mes.base.diff<-lapply(c(1,2), function(x){
+    mes.base.diff[[x]]<-mes.base.diff[[x]][!(rownames(mes.base.diff[[x]]) %in% rownames(all_diff[[3*x-1]])),]
+})
+
+del.compare<-lapply(c(3,6), function(x){
+    y<-fit.base.matrix[rownames(mes.base.diff[[x/3]]), x]
+    return(y)
+})
+#mes.genes.opposite.del<lapply(c(1,2), function(x){
+    #named.mes<-mes.base.diff[[x]][,1]
+    #names(named.mes)<-rownames(mes.base.diff[[x]])
+    #sapply(seq(1:length(named.mes)), function(y){
+        #if(sign(named.mes[y])!=sign(del.compare[[x]][names(named.mes[y])])){
+           # return(names(named.mes[y]))
+        #}
+    #})
+#})
+```
+
+```{r}
+circadian<-c("AT1G01060", "AT5G61380", "AT2G46830", "AT5G02810", "AT2G46790")
+aux.circ<-unique(c(auxin_all, circadian), fromLast = TRUE)
+auxin_base<-aux.circ[aux.circ %in% rownames(fit.base.matrix)]
+auxin.base.matrix<-fit.base.matrix[auxin_base,]
+auxin.base.diff<-auxin.base.matrix[rownames(auxin.base.matrix) %in% c(rownames(base.diff), circadian),]
+auxin.base.diff
+```
+```{r}
+#write.table(rownames(auxin.base.diff), file = "auxin_names.txt", sep = "\n", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+```{r}
+col_fun<-colorRamp2(c(-3, 0, 3), c("blue", "white", "red"))
+
+auxin.names<-read.table("../../Documents/auxin_names.txt", header = TRUE, sep = "\t")
+auxin.names<-auxin.names[rownames(auxin.base.diff),]
+named.auxin.base.diff<-auxin.base.diff
+rownames(named.auxin.base.diff)<-auxin.names[,4]
+```
+
+```{r, fig.width = 18, fig.height = 7}
+aht<- Heatmap(
+  named.auxin.base.diff[,c(1:3)], 
+  name="auxin.base.diff.1h", 
+  col = col_fun,
+  clustering_distance_rows = "pearson",
+  row_split = c(rep("auxin", 47), rep("circadian", 5)),
+  column_title = "Differentially expressed auxin genes \n at steady state low light at 1H, as compared to WT", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(12, "cm"), 
+  row_names_gp = gpar(fontsize = 7),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "LFC", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE,
+  row_names_max_width = unit(10, "cm")
+  )
+
+aht1<- Heatmap(
+  named.auxin.base.diff[,c(4:6)], 
+  name="auxin.base.diff.6h", 
+  col = col_fun,
+  clustering_distance_rows = "pearson",
+  row_split = c(rep("auxin", 47), rep("circadian", 5)),
+  column_title = "Differentially expressed auxin genes \n at steady state low light at 6H, as compared to WT", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(12, "cm"), 
+  row_names_gp = gpar(fontsize = 7),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "LFC", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE,
+  row_names_max_width = unit(10, "cm")
+  )
+
+gb_aht = grid.grabExpr(draw(aht))
+gb_aht1 = grid.grabExpr(draw(aht1))
+
+grid.newpage()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("left", "top")))
+grid.draw(gb_aht)
+popViewport()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("right", "top")))
+grid.draw(gb_aht1)
+popViewport()
+```
+```{r}
+defense.go<-"GO:0006952"
+defense.genes<-AtGO2TAIR[[defense.go]]
+defense.base<-defense.genes[defense.genes %in% rownames(fit.base.matrix)]
+defense.base.matrix<-fit.base.matrix[defense.base,]
+defense.base.diff<-unique(defense.base.matrix[rownames(defense.base.matrix) %in% rownames(base.diff),])
+defense.base.diff
+```
+```{r}
+#write.table(rownames(defense.base.diff), file = "../../Documents/defense_names.txt", sep = "\n", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+```{r}
+defense.names<-read.table("../../Documents/defense_names.txt", header = TRUE, sep = "\t", fill = TRUE, stringsAsFactors = FALSE)
+named.defense.base.diff<-defense.base.diff
+
+rownames(named.defense.base.diff)<-sapply(rownames(named.defense.base.diff), function(x){
+  if(defense.names[x,4]==""){
+    return(x)
+  } else{
+    return(defense.names[x,4])
+  }
+})
+```
+
+
+```{r, fig.width=10, fig.height=7}
+col_fun<-colorRamp2(c(-3, 0, 3), c("blue", "white", "red"))
+
+
+aht3<- Heatmap(
+  named.defense.base.diff, 
+  name="defense.base.diff", 
+  col = c("blue", "white", "red"),
+  clustering_distance_rows = "pearson",
+  column_title = "Differentially expressed defense genes \nat steady state low light, as compared to WT", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(12, "cm"), 
+  row_names_gp = gpar(fontsize = 8),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "LFC", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE,
+  row_names_max_width = unit(8, "cm")
+  )
+
+gb_aht3 = grid.grabExpr(draw(aht3))
+
+grid.newpage()
+pushViewport(viewport(x = 0.5, y = 1, width = 1, just = c("center", "top")))
+grid.draw(gb_aht3)
+popViewport()
+```
+
+```{r}
+ja_gos<-c("GO:0009753", "GO:0009695")
+ja_all<-unique(unlist(sapply(ja_gos, function(x) AtGO2TAIR[[x]])))
+ja_diff<-ja_all[ja_all %in% unlist(l.genesOfInterest)]
+
+ja_diff
+```
+```{r}
+ja.col<-colorRamp2(c(-4,0,4), c("blue", "white", "red"))
+ht3<- Heatmap(
+  fit.matrix0[ja_diff,], 
+  name="jasmonic2", 
+  col = ja.col,
+  clustering_distance_rows = "pearson",
+  column_title = "JA signalling GO category genes most loaded for PC2 diff", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(9, "cm"), 
+  row_names_gp = gpar(fontsize = 8),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "expression", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+draw(ht3)
+```
+
+EXPORTING PROMOTER REGIONS FOR FURTHER MOTIF ANALYSIS
+
+```{r}
+arb.promoters<-promoters(arb, upstream=500, downstream=200)
+arb.promoters[1:10,]
+```
+```{r}
+auxin.promoters<-lapply(unname(auxin_diff), function(x){
+    ret<-arb.promoters[grep(x, names(arb.promoters)),]
+    ret<-as.data.frame(ret)[1,]
+    return(ret)
+})
+auxin.promoters<-bind_rows(auxin.promoters)
+rownames(auxin.promoters)<-auxin.promoters[,"tx_name"]
+auxin.promoters
+```
+
+REFORMAT INTO BED STRUCTURE
+
+```{r}
+score.column<-rep("1000", nrow(auxin.promoters))
+auxin.bed<-cbind(auxin.promoters[,c(1,2,3,7)], score.column, auxin.promoters[,5])
+colnames(auxin.bed)[6]<-"strand"
+auxin.bed
+```
+```{r}
+write.table(auxin.bed, file = "../../Documents/auxin.bed", quote = F, sep = "\t", row.names = F, col.names = F)
+```
+
+
+```{r}
+methGO<-fit.matrix0[rownames(fit.matrix0) %in% intersect(methGenes, all_diffs),c(1,3,5,7,2,4,6,8)]
+colMeans2(methGO[,1:4])
+colMeans2(methGO[,5:8])
+heatmap.2(methGO[,1:4], scale="row", trace="none", col=colorRampPalette(c("blue", "white", "red")), dendrogram = "column", labRow=FALSE, cexCol=0.8, main = "RNA methylation genes", distfun = distCor, breaks = seq(-3,3, length.out = 18))
+heatmap.2(methGO[,5:8], scale="row", trace="none", col=colorRampPalette(c("blue", "white", "red")), dendrogram = "column", labRow=FALSE, cexCol=0.8, main = "RNA methylation genes", distfun = distCor, breaks = seq(-3,3, length.out = 18))
+```
+
+```{r}
+diff_info<-data.frame(all_diffs)
+rownames(diff_info)<-all_diffs
+diff_info<-addData(diff_info, symbol, "id")
+diff_info<-addData(diff_info, descr, "info")
+write.table(diff_info, "../../Documents/diff_info.txt", quote=F, sep="\t")
+head(diff_info)
+```
+
+```{r}
+
+GOdata<-new("topGOdata", description="GO analysis of diff genes in light transfer", ontology="BP", allGenes=geneList, annot=annFUN.gene2GO, gene2GO=AtGO, nodeSize = 5)
+GOdata
+```
+
+```{r}
+
+resultFis <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+allRes <- GenTable(GOdata, classic = resultFis, orderBy = "classic", ranksOf = "classic", topNodes = 30)
+allRes
+```
+```{r}
+showSigOfNodes(GOdata, score(resultFis), firstSigNodes = 10, useInfo ='def')
+```
+```{r}
+
+normWTdel<-fit.matrix0[rownames(fit.matrix0) %in% all_diffs,]
+normWTdel<-matrix(unlist(lapply(seq(1:8), function(x){
+  if(x %in% c(1,3,5,7)){
+    (normWTdel[,7]-normWTdel[,x])/(normWTdel[,7]-normWTdel[,1])
+  }
+  else{
+    (normWTdel[,8]-normWTdel[,x])/(normWTdel[,8]-normWTdel[,2])
+  }
+})), ncol = ncol(normWTdel))
+rownames(normWTdel)<-rownames(fit.matrix0[rownames(fit.matrix0) %in% all_diffs,])
+colnames(normWTdel)<-colnames(fit.matrix0[,])
+
+normWTdel<-data.frame(normWTdel)
+
+ggplot(normWTdel) +
+  geom_point(aes(x=rownames(normWTdel), y=normWTdel[,4]), color=rgb(0.2,0.7,0.1,0.8), size=0.5) +
+  geom_point(aes(x=rownames(normWTdel), y=normWTdel[,6]), color=rgb(0.7,0.2,0.1,0.8), size=0.5) +
+  ylim(-3,4) +
+  geom_hline(yintercept = 1) +
+  geom_hline(yintercept = 0) +
+  xlab("genes with diff change in response to light") +
+  ylab("response to light relative to WT (1) and deletion (0)")
+```
+```{r}
+ggplot(normWTdel, aes(EPI1)) +
+  geom_histogram(bins=70)+
+  xlim(-3,3)
+
+ggplot(normWTdel, aes(MES1)) +
+  geom_histogram(bins=70)+
+  xlim(-3,3)
+```
+```{r}
+
+ggplot() +
+  geom_density(data=melt(normWTdel[,c(5,3)]), aes(x=value, group=variable, fill=variable), alpha=0.5)+
+  xlim(-4,5)+
+  geom_vline(xintercept = 0)+
+  geom_vline(xintercept = 1)
+
+ggplot() +
+  geom_density(data=melt(normWTdel[,c(6,4)]), aes(x=value, group=variable, fill=variable), alpha=0.5)+
+  xlim(-4,5)+
+  geom_vline(xintercept = 0)+
+  geom_vline(xintercept = 1)
+```
+```{r}
+normMelt<-melt(normWTdel[,3:6])
+ggplot(normMelt, aes(factor(variable), value)) +
+  geom_violin() +
+  ylim(-3,4)
+```
+
+```{r}
+var.test(cont.of.intrest[,3], cont.of.intrest[,5], alternative= "two.sided")
+var.test(cont.of.intrest[,4], cont.of.intrest[,6], alternative= "two.sided") #variance doesn't seem equal so Welch test used
+
+cont.of.int<- as.data.frame(cont.of.intrest)
+my.comparisons<-as.list(as.data.frame(rbind(c(rep(c("WT1", "WT6"), each=3), "EPI1", "EPI6"), c("EPI1", "MES1", "DEL1", "EPI6", "MES6", "DEL6", "MES1", "MES6")), stringsAsFactors=F))
+t.tests<-sapply(my.comparisons, function(x){
+  y<-t.test(cont.of.int[,x[1]], cont.of.int[,x[2]])
+  if(y$p.value<0.001){
+    return("***")
+  } else if (y$p.value<0.01){
+    return("**")
+  } else if (y$p.value<0.05){
+    return("*")
+  } else {
+    return("ns")
+  }
+})
+
+
+
+cont.of.int<-melt(cont.of.int[,c(1,3,5,7,2,4,6,8)])
+cont.of.int$genotype<-rep(rep(c("WT", "MES", "EPI", "DEL"), each=nrow(cont.of.intrest)), 2)
+ggplot(cont.of.int, aes(variable, value, fill=genotype)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_cartesian(ylim = c(-2.5,4)) +
+  stat_compare_means(method="t.test", comparisons = my.comparisons, label = "p.signif", label.y=c(2.6, 3, 3.4, 2.6, 3, 3.4, 3.8, 3.8), tip.length = 0) +
+  geom_hline(yintercept = median(cont.of.intrest[,1]), size=0.5, linetype="dashed")
+
+norm.of.int<-melt(normWTdel[,c(3,5,4,6)])
+norm.of.int<-rep(rownames(normWTdel), 4)
+ggplot(melt(normWTdel[,c(3,5,4,6)]), aes(variable, value)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_cartesian(ylim = c(-3,4)) +
+  stat_compare_means(method="t.test", comparisons = list(c("EPI1", "MES1"), c("EPI6", "MES6")), label = "p.signif", label.y=c(4,4), tip.length = 0, paired=T)
+```
+
+```{r}
+
+fullExpr<-fit.matrix0[rownames(fit.matrix0) %in% all_diffs,]
+fullMelt1<-melt(fullExpr[,seq(1,8, by=2)])
+fullMelt2<-melt(fullExpr[,seq(2,8, by=2)])
+ggplot() +
+  geom_density(data=fullMelt1, aes(x=value, group=Contrasts, colour=Contrasts)) +
+  xlim(-3,3)
+
+ggplot() +
+  geom_density(data=fullMelt2, aes(x=value, group=Contrasts, colour=Contrasts)) +
+  xlim(-3,3)
+```
+```{r}
+fullMelt<-melt(fullExpr)
+ggplot(fullMelt, aes(factor(Contrasts), value)) +
+  geom_violin() +
+  ylim(-2,3)
+```
+
+PHYB stopPHYB and YFP analysis
+
+```{r}
+phyb.yfp<-readLines("../../Documents/out.txt")
+phyb.yfp<-phyb.yfp[-(grep("quantification", phyb.yfp))]
+sample<-list.files("/mnt/uosfstore/sudlab1/General/projects/magda_RNAseq_MAIN/salmon_pipeline_mod/", pattern = "fastq.1.gz")
+sample<-gsub(".fastq.1.gz", "", sample)
+sample<-c(sample, rep(sample, each=4))
+phyb.yfp<-sapply(seq(1:length(phyb.yfp)), function(x){
+  paste(sample[x], phyb.yfp[x], sep="\t")
+})
+phyb.yfp<-read.delim(text=phyb.yfp, header = F)
+phyb.yfp<-dcast(phyb.yfp, V2~V1, value.var = "V5")
+rownames(phyb.yfp)<-c("PHYB.1", "PHYB.2", "stopPHYB.1", "stopPHYB.2", "YFP")
+phyb.yfp[,1:13]
+```
+```{r}
+rel_phyb.yfp<-data.frame("PHYB"=as.numeric(colSums(phyb.yfp[1:2,-1])), "YFP"=as.numeric(phyb.yfp[5,-1]))
+rownames(rel_phyb.yfp)<-colnames(phyb.yfp[-1])
+ggplot(rel_phyb.yfp[c(1:16, 33:48),], aes(x=PHYB, y=YFP)) +
+  geom_point() +
+  geom_smooth(method = lm)
+```
+```{r}
+cor(rel_phyb.yfp$PHYB, rel_phyb.yfp$YFP)
+cor(as.numeric(phyb.yfp[1,-1]), as.numeric(phyb.yfp[5,-1]))
+cor(as.numeric(phyb.yfp[2,-1]), as.numeric(phyb.yfp[5,-1]))
+```
+```{r}
+new.phy.yfp<-read.delim(file = "../../Documents/out2.txt", header = F)
+sstring<-substr(new.phy.yfp[,1], 1, 9)
+n<-sapply(unique(sstring), function(x){
+  length(grep(x, sstring))/64
+})
+new.phy.yfp$sample<-unlist(sapply(n, function(y){
+  rep(unique(sample), each=y)
+}))
+new.phy.yfp<-dcast(new.phy.yfp, V1~sample, value.var = "V4")
+new.phy.yfp[, 1:13]
+```
+```{r}
+rel_new<-data.frame("PHYB"=as.numeric(colSums(new.phy.yfp[1:2,-1])), "PHYB.YFP"=as.numeric(new.phy.yfp[11,-1]), "PHYBstop"=as.numeric(colSums(new.phy.yfp[3:4,-1])), "SPCH"=as.numeric(colSums(new.phy.yfp[9:10,-1])), "CA"=as.numeric(colSums(new.phy.yfp[5:8,-1])))
+rownames(rel_new)<-colnames(new.phy.yfp)[-1]
+rel_new$sample<-substr(rownames(rel_new), 1,6)
+```
+
+```{r}
+rel_new<-melt(rel_new, id.vars = "sample")
+mn<-aggregate(rel_new[,3], by=list(rel_new$sample, rel_new$variable), mean)
+rel_new<-cbind(mn, sd=aggregate(rel_new[,3], by=list(rel_new$sample, rel_new$variable), sd)[,3])
+
+```
+
+```{r}
+ggplot(rel_new[1:64,], aes(x=Group.2, y=x, fill=Group.1)) +
+  geom_bar(position = "dodge", stat="identity") +
+  geom_errorbar(aes(ymin=x-sd, ymax=x+sd), width=.2,
+                 position=position_dodge(.9)) +
+  theme_classic()
+```
+
+TF behaviour
+
+```{r}
+simpleCap <- function(x) {
+  s <- strsplit(x, " ")[[1]]
+  paste(toupper(substring(s, 1,1)), substring(s, 2),
+      sep="", collapse=" ")
+}
+```
+
+```{r}
+# Reformatting one of the files 
+
+lhy<-read.csv("../../Documents/TF_analysis/LHY.csv", stringsAsFactors = F)
+lhy<-melt(lhy, na.rm=T)
+lhy<-lhy[,-4]
+colnames(lhy)<-c("TAIR", "DESCR", "ACTIVITY")
+lhy$ACTIVITY<-sapply(lhy$ACTIVITY, simpleCap)
+write.csv(lhy, file="../../Documents/TF_analysis/LHY.csv", row.names = F)
+rm(lhy)
+```
+
+```{r}
+# Building a list of data frames containing TFs of interest
+
+dirTF<-"../../Documents/TF_analysis/"
+TFs<-lapply(list.files(dirTF), function(x){
+  if(grepl("csv", x)){
+    y<-read.csv(paste(dirTF, x, sep=""), header = T)
+    return(y[,c("TAIR", "ACTIVITY")])
+  } else {
+    read.delim(paste(dirTF, x, sep = ""), header = F)
+  }
+})
+
+TFs<-c(list(data.frame(TAIR=Reduce(rbind, TFs[c(1,2)]), ACTIVITY=c(rep("Induced", times=nrow(TFs[[1]])), rep("Repressed", times=nrow(TFs[[2]]))))), TFs[c(3:8)])
+
+names(TFs)<-c("HY5", toupper(sapply(list.files(dirTF)[3:8], sub, pattern=".csv", replacement="")))
+names(TFs[[1]])[1]<-"TAIR"
+str(TFs)
+```
+
+```{r}
+SumActivity<-function(ind, repr, vect){
+    up<-sum(vect[ind]>0) + sum(vect[repr]<0)
+    down<-sum(vect[ind]<0) + sum(vect[repr]>0)
+    (up/(up+down)-0.5)*2*100
+}
+
+TF.response<-lapply(TFs, function(x){
+    ind<-x[x[,2]=="Induced",1]
+    repr<-x[x[,2]=="Repressed",1]
+    apply(fit.matrix0, 2, SumActivity, ind=ind, repr=repr)
+    
+})
+
+TF.response
+```
+
+```{r}
+TF.frame<-matrix(unlist(TF.response), ncol = 7)
+colnames(TF.frame)<-names(TF.response)
+rownames(TF.frame)<-colnames(fit.matrix0)
+TF.frame<-TF.frame[c(1,3,5,7,2,4,6,8),]
+heatmap.2(t(TF.frame), trace = "none", col=colorRampPalette(c("blue", "white", "red")))
+```
+
