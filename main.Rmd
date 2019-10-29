@@ -41,6 +41,7 @@ library(reticulate)
 use_python("/home/mbp16mbd/miniconda3/bin/python3")
 
 source("modified_plotloadings.R")
+source("tair_bindings.R")
 
 ```
 
@@ -987,19 +988,24 @@ defense.base.matrix<-fit.base.matrix[defense.base,]
 defense.base.diff<-unique(defense.base.matrix[rownames(defense.base.matrix) %in% rownames(base.diff),])
 defense.base.diff
 ```
+
+
 ```{r}
-#write.table(rownames(defense.base.diff), file = "../../Documents/defense_names.txt", sep = "\n", quote = FALSE, row.names = FALSE, col.names = FALSE)
+tair_bindings<-TAIR.bindings("gene_aliases_20180930.txt", "Araport11_functional_descriptions_20180930.txt")
+tair_bindings[2000:2010,]
 ```
 
 ```{r}
-defense.names<-read.table("../../Documents/defense_names.txt", header = TRUE, sep = "\t", fill = TRUE, stringsAsFactors = FALSE)
+defense.info<-tair_bindings[rownames(defense.base.diff),]
+
 named.defense.base.diff<-defense.base.diff
 
 rownames(named.defense.base.diff)<-sapply(rownames(named.defense.base.diff), function(x){
-  if(defense.names[x,4]==""){
+  if(defense.info[x,2]==""){
     return(x)
   } else{
-    return(defense.names[x,4])
+      to.ret<-unlist(strsplit(defense.info[x,2], ","))
+    return(to.ret[1])
   }
 })
 ```
