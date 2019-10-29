@@ -1,6 +1,6 @@
 TAIR.bindings<-function(aliases, bindings, save = FALSE){
-    alias.frame<-read_delim(aliases, delim="\t")
-    bind.frame<-read_delim(bindings, delim = "\t")
+    alias.frame<-read.delim(aliases, stringsAsFactors = F)
+    bind.frame<-read.delim(bindings, stringsAsFactors = F)
     
     bind.frame[,1]<-apply(bind.frame, 1, function(x){
         to.sub<-substr(x[1], 1, nchar(x[1])-2)
@@ -26,7 +26,9 @@ TAIR.bindings<-function(aliases, bindings, save = FALSE){
         write.table(full.frame, file = "tair_bindings.txt", sep = "\t", row.names = FALSE)
         print("file saved to current directory as tair_bindings.txt")
     }
-    
+
+    full.frame<-as.data.frame(full.frame)
+    rownames(full.frame)<-full.frame[,1]
 
     return(full.frame)
 }
