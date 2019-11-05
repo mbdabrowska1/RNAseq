@@ -845,6 +845,85 @@ pushViewport(viewport(x = 0.5, y = 1, width = 1, just = c("center", "top")))
 grid.draw(gb_fht)
 popViewport()
 ```
+
+```{r}
+mes.del.pattern<-function(frame){
+    new<-apply(frame,1, function(x){
+        if(sign(x[2]) != sign(x[3])){
+            ab10<-abs(x[2]-x[3])/10
+            
+            if(abs(x[2])>ab10 & abs(x[3])>2*ab10 & abs(x[1])<ab10){
+                return(x)
+            }
+        }
+    })
+    
+    newer<-unlist(new[lengths(new) != 0])
+    
+    name.newer<<-lapply(c(1,2), function(y){
+        splt<-unlist(strsplit(names(newer), "\\."))
+        return(unique(splt[seq(y, length(splt), 2)]))
+    })
+    
+    newest<-data.frame(matrix(newer, ncol = 3, byrow = T, dimnames = name.newer))
+    return(newest)
+}
+
+pattern.genes1<-mes.del.pattern(base.diff[,1:3])
+pattern.genes6<-mes.del.pattern(base.diff[,4:6])
+
+pattern.genes<-base.diff[unique(c(rownames(pattern.genes1), rownames(pattern.genes6))),]
+
+pattern.genes[1:10,]
+```
+```{r, fig.height=8, fig.width=12}
+mdht1<- Heatmap(
+  as.matrix(pattern.genes1), 
+  name="pattern.genes1", 
+  clustering_distance_rows = "pearson",
+  column_title = "Differentially expressed genes \n at steady state low light at 1H, showing mes>WT|epi>del pattern", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(16, "cm"), 
+  row_names_gp = gpar(fontsize = 6),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "LFC", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+mdht6<- Heatmap(
+  as.matrix(pattern.genes6), 
+  name="pattern.genes6", 
+  clustering_distance_rows = "pearson",
+  column_title = "Differentially expressed genes \n at steady state low light at 6H, showing mes>WT|epi>del pattern", 
+  column_title_side = "top", 
+  column_names_rot = 45, 
+  width = unit(9, "cm"), 
+  height = unit(16, "cm"), 
+  row_names_gp = gpar(fontsize = 6),
+  border = TRUE, 
+  heatmap_legend_param = list(title = "LFC", border = "black"),
+  row_dend_width = unit(2, "cm"),
+  show_parent_dend_line = FALSE
+  )
+
+gb_mdht1 = grid.grabExpr(draw(mdht1))
+gb_mdht6 = grid.grabExpr(draw(mdht6))
+
+grid.newpage()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("right", "top")))
+grid.draw(gb_mdht1)
+popViewport()
+
+pushViewport(viewport(x = 0.5, y = 1, width = 0.5, just = c("left", "top")))
+grid.draw(gb_mdht6)
+popViewport()
+
+```
+
 ```{r}
 digitiseDE<-function(diff.frame){
     apply(diff.frame, c(1,2), function(x){
