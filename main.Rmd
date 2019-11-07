@@ -68,7 +68,10 @@ k<-keys(arb, keytype = "GENEID")
 df<-select(arb, keys=k, keytype = "GENEID", columns="TXNAME")
 tx2gene<-df[,2:1] #reverse order
 tx2gene[1:10,]
-write.csv(tx2gene, "../../Documents/transcript_mapping.csv", quote = F)
+if(!file.exists("../../Documents/transcript_mapping.csv")){
+    write.csv(tx2gene, "../../Documents/transcript_mapping.csv", quote = F)
+}
+
 ```
 
 ```{r}
@@ -221,9 +224,12 @@ fit_diff<-lapply(all_diff, function(x){
 
 all_diffs<- unique(unlist(lapply(all_diff, rownames)))
 
-
-write.table(sapply(all_diffs, paste0, " 1"), "../../Documents/phyb_dependent_diff.txt", sep = "\n", row.names = F, quote = F)
-write.table(sapply(all_diffs, paste0, " red"), "../../Documents/phyb_dependent_diff_KEGG.txt", sep = "\n", row.names = F, quote = F)
+if(!file.exists("../../Documents/phyb_dependent_diff.txt")){
+    write.table(sapply(all_diffs, paste0, " 1"), "../../Documents/phyb_dependent_diff.txt", sep = "\n", row.names = F, quote = F)
+}
+if(!file.exists("../../Documents/phyb_dependent_diff_KEGG.txt")){
+    write.table(sapply(all_diffs, paste0, " red"), "../../Documents/phyb_dependent_diff_KEGG.txt", sep = "\n", row.names = F, quote = F)
+}
 ```
 
 ```{r}
@@ -244,7 +250,9 @@ colke6<-c(WT6="red", EPI6="purple", MES6="blue", DEL6="black")
 p1<-pairsplot(pca1h, components = getComponents(pca1h, seq_len(3)), colkey=colke1, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
 p2<-pairsplot(pca6h, components = getComponents(pca6h, seq_len(3)), colkey=colke6, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
 pF<-arrangeGrob(p1,p2, nrow=1, padding = unit(0, "line"))
-ggsave("../../Documents/PCAplot.png", pF, width = 26, height = 10, unit = "in")
+if(!file.exists("../../Documents/PCAplot.png")){
+    ggsave("../../Documents/PCAplot.png", pF, width = 26, height = 10, unit = "in")
+}
 p1
 p2
 ```
@@ -257,7 +265,9 @@ Dcolke6<-c(WT6="red", EPI6="purple", MES6="blue", DEL6="black")
 p1<-pairsplot(Dpca1h, components = getComponents(Dpca1h, seq_len(3)), colkey=Dcolke1, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
 p2<-pairsplot(Dpca6h, components = getComponents(Dpca6h, seq_len(3)), colkey=Dcolke6, legendPosition = "right", pointSize = 1.5, legendLabSize = 8, axisLabSize = 14)
 pF<-arrangeGrob(p1,p2, nrow=1, padding = unit(0, "line"))
-ggsave("../../Documents/PCAplotDiffs.png", pF, width = 26, height = 10, unit = "in")
+if(!file.exists("../../Documents/PCAplotDiffs.png")){
+    ggsave("../../Documents/PCAplotDiffs.png", pF, width = 26, height = 10, unit = "in")
+}
 p1
 p2
 ```
@@ -279,7 +289,9 @@ p1<-plotloadingsMD(pca1.named, components = getComponents(pca1.named, seq_len(3)
 p2<-plotloadingsMD(pca6.named, components = getComponents(pca6.named, seq_len(3)), col=c("blue", "white", "red"), rangeRetain = 0.08, title ="Most loaded all genes for PC at 6H", labSize = 3) +
     theme(plot.title = element_text(hjust = 0.5))
 pF<-arrangeGrob(p1, p2, nrow = 1)
-ggplot2::ggsave("../../Documents/loadedNonDiff.png", pF, width = 14, height=7, units = "in")
+if(!file.exists("../../Documents/loadedNonDiff.png")){
+    ggplot2::ggsave("../../Documents/loadedNonDiff.png", pF, width = 14, height=7, units = "in")
+}
 
 p1
 p2
@@ -299,7 +311,9 @@ p3<-plotloadingsMD(Dpca1.named, components = getComponents(Dpca1.named, seq_len(
 p4<-plotloadingsMD(Dpca6.named, components = getComponents(Dpca6.named, seq_len(3)), col=c("blue", "white", "red"), rangeRetain = 0.08, title ="Most loaded diff genes for PC at 6H", labSize = 3) +
     theme(plot.title = element_text(hjust = 0.5))
 DpF<-arrangeGrob(p3, p4, nrow = 1)
-ggplot2::ggsave("../../Documents/loadedDiff.png", DpF, width = 14, height=7, units = "in")
+if(!file.exists("../../Documents/loadedDiff.png")){
+    ggplot2::ggsave("../../Documents/loadedDiff.png", DpF, width = 14, height=7, units = "in")
+}
 
 p3
 p4
@@ -361,7 +375,10 @@ g<-lapply(seq(1:length(loadInfo)), function(x){
 
 m<-marrangeGrob(grobs=g, nrow=1, ncol =1)
 lapply(seq(1:6), function(x){
-    ggsave(filename = paste0("../../Documents/", "loadings", colnames(loadInfo[[x]])[2], nam[x], ".png"), m[[x]], width = 14, height = 8, units = "in")
+    name_file<-paste0("../../Documents/", "loadings", colnames(loadInfo[[x]])[2], nam[x], ".png")
+    if(!file.exists(name_file)){
+        ggsave(filename = name_file, m[[x]], width = 14, height = 8, units = "in")
+    }
 })
 ```
 
@@ -604,7 +621,10 @@ g<-lapply(seq(1:length(l.GO.wall)), function(x){
 m<-marrangeGrob(grobs=g, nrow=2, ncol =1)
 nam<-c("PC1_ALL", "PC2_ALL", "PC3_ALL", "PC1_DIFF", "PC2_DIFF", "PC3_DIFF")
 lapply(seq(1:6), function(x){
-    ggsave(filename = paste0("../../Documents/", "GO", nam[x], ".png"), m[[x]], width = 12, height = 10, units = "in")
+    name_file<-paste0("../../Documents/", "GO", nam[x], ".png")
+    if(!file.exists(name_file)){
+        ggsave(filename = name_file, m[[x]], width = 12, height = 10, units = "in")
+    }
 })
 ```
 
@@ -795,7 +815,10 @@ pinit1<-pairsplot(init.pca1, components = getComponents(init.pca1, seq_len(3)), 
 pinit6<-pairsplot(init.pca6, components = getComponents(init.pca6, seq_len(3)), legendPosition = "right", pointSize = 2, legendLabSize = 12, axisLabSize = 14, title = "baseline PCA low light 6H", titleLabSize = 22, trianglelabSize = 14, colkey = init.col6)
 
 pFinit<-arrangeGrob(pinit1,pinit6, nrow=1, padding = unit(0, "line"))
-ggsave("../../Documents/PCA_baseline.png", pFinit, width = 28, height = 8, unit = "in")
+
+if(!file.exists("../../Documents/PCA_baseline.png")){
+    ggsave("../../Documents/PCA_baseline.png", pFinit, width = 28, height = 8, unit = "in")
+}
 
 pinit1
 pinit6
@@ -923,6 +946,15 @@ grid.draw(gb_mdht6)
 popViewport()
 
 ```
+```{r}
+pattern.info<-tair_bindings[rownames(pattern.genes),]
+
+
+if(!file.exists("../../Documents/mes_del_pattern_info.txt")){
+    write.table(pattern.info, file = "../../Documents/mes_del_pattern_info.txt", quote = F, sep = "\t")
+}
+    
+```
 
 ```{r}
 digitiseDE<-function(diff.frame){
@@ -1009,7 +1041,7 @@ aux.circ<-unique(c(auxin_all, circadian), fromLast = TRUE)
 auxin_base<-aux.circ[aux.circ %in% rownames(fit.base.matrix)]
 auxin.base.matrix<-fit.base.matrix[auxin_base,]
 auxin.base.diff<-auxin.base.matrix[rownames(auxin.base.matrix) %in% c(rownames(base.diff), circadian),]
-auxin.base.diff
+auxin.base.diff[1:10,]
 ```
 ```{r}
 #write.table(rownames(auxin.base.diff), file = "auxin_names.txt", sep = "\n", quote = FALSE, row.names = FALSE, col.names = FALSE)
@@ -1022,6 +1054,8 @@ auxin.names<-read.table("../../Documents/auxin_names.txt", header = TRUE, sep = 
 auxin.names<-auxin.names[rownames(auxin.base.diff),]
 named.auxin.base.diff<-auxin.base.diff
 rownames(named.auxin.base.diff)<-auxin.names[,4]
+
+named.auxin.base.diff[1:10,]
 ```
 
 ```{r, fig.width = 18, fig.height = 7}
@@ -1192,7 +1226,10 @@ colnames(auxin.bed)[6]<-"strand"
 auxin.bed
 ```
 ```{r}
-write.table(auxin.bed, file = "../../Documents/auxin.bed", quote = F, sep = "\t", row.names = F, col.names = F)
+if(!file.exists("../../Documents/auxin.bed")){
+    write.table(auxin.bed, file = "../../Documents/auxin.bed", quote = F, sep = "\t", row.names = F, col.names = F)
+}
+
 ```
 
 
@@ -1209,7 +1246,11 @@ diff_info<-data.frame(all_diffs)
 rownames(diff_info)<-all_diffs
 diff_info<-addData(diff_info, symbol, "id")
 diff_info<-addData(diff_info, descr, "info")
-write.table(diff_info, "../../Documents/diff_info.txt", quote=F, sep="\t")
+
+if(!file.exists("../../Documents/diff_info.txt")){
+    write.table(diff_info, "../../Documents/diff_info.txt", quote=F, sep="\t")
+}
+
 head(diff_info)
 ```
 
@@ -1419,7 +1460,10 @@ lhy<-melt(lhy, na.rm=T)
 lhy<-lhy[,-4]
 colnames(lhy)<-c("TAIR", "DESCR", "ACTIVITY")
 lhy$ACTIVITY<-sapply(lhy$ACTIVITY, simpleCap)
-write.csv(lhy, file="../../Documents/TF_analysis/LHY.csv", row.names = F)
+if(!file.exists("../../Documents/TF_analysis/LHY.csv")){
+    write.csv(lhy, file="../../Documents/TF_analysis/LHY.csv", row.names = F)
+}
+
 rm(lhy)
 ```
 
