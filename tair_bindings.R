@@ -22,13 +22,16 @@ TAIR.bindings<-function(aliases, bindings, save = FALSE){
     # this is borrowed from a forum. It uses dplyr package to combine rows by the AT name and fills gaps form multiple sources
     ###
     
-    if(save == TRUE){
-        write.table(full.frame, file = "tair_bindings.txt", sep = "\t", row.names = FALSE)
-        print("file saved to current directory as tair_bindings.txt")
-    }
 
     full.frame<-as.data.frame(full.frame)
     rownames(full.frame)<-full.frame[,1]
+    
+    full.frame<-full.frame[grep("AT.G\\d+", rownames(full.frame)),]
+    
+    if(save == TRUE){
+        write.table(full.frame, file = "tair_bindings.txt", sep = "\t")
+        print("file saved to current directory as tair_bindings.txt")
+    }
 
     return(full.frame)
 }
