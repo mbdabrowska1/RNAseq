@@ -9,6 +9,7 @@ editor_options:
 ---
 
 ```{r}
+library(ComplexHeatmap)
 library(tximport)
 library(GenomicFeatures)
 library(readr)
@@ -34,7 +35,6 @@ library(grid)
 library(gtable)
 library(dplyr)
 library(biomaRt)
-library(ComplexHeatmap)
 library(circlize)
 
 library(reticulate)
@@ -1012,6 +1012,100 @@ if(!file.exists("../../Documents/mes_del_pattern_info.txt")){
 }
     
 ```
+
+Genes that show pattern and diff in both 1 and 6 hours
+
+```{r}
+int.pattern<-intersect(rownames(pattern.genes1), rownames(pattern.genes6))
+int.pattern<-base.diff[int.pattern,]
+
+int.patt.info<-cbind(int.pattern, tair_bindings[rownames(int.pattern),])
+
+if(!file.exists("../../Documents/intersect_pattern.txt")){
+    write.table(int.patt.info, file = "../../Documents/intersect_pattern.txt", quote = F, sep = "\t")
+}
+```
+
+CHROMATIN ACCESSIBILITY ANALYSIS
+
+```{r}
+chrom<-read.table("/mnt/uosfstore/sudlab1/General/projects/magda_RNAseq_MAIN/R/Documents/TE_coords.txt", header=T)
+chrom$orientation_is_5prime<-gsub("true", "+", chrom$orientation_is_5prime)
+chrom$orientation_is_5prime<-gsub("false", "-", chrom$orientation_is_5prime)
+chrom$chromosome<-apply(chrom, 1, function(x){
+    y<-as.numeric(strsplit(unfactor(x[1]), "")[[1]][3])
+    return(y)
+})
+chrom.GR<-makeGRangesFromDataFrame(chrom, seqnames.field = "chromosome", start.field = "Transposon_min_Start", end.field = "Transposon_max_End", strand.field = "orientation_is_5prime", keep.extra.columns = T)
+names(chrom.GR)<-chrom$Transposon_Name
+chrom.GR[1:5]
+```
+
+```{r}
+te.genes<-GenomicFeatures::genes(arb)
+te.genes[1:5]
+```
+
+```{r}
+near.result<-GenomicRanges::nearest(te.genes[rownames(int.pattern)[1]], chrom.GR)
+near.dist<-GenomicRanges::distanceToNearest(te.genes[rownames(int.pattern)[1]], chrom.GR)
+te.genes[rownames(int.pattern)[1]]
+chrom.GR[near.result]
+near.dist
+```
+```{r}
+closest.te<-lapply(rownames(int.pattern), function(x){
+    query<-x
+    n.result<-GenomicRanges::nearest(te.genes[x], chrom.GR)
+    n.te<-names(chrom.GR[n.result])
+    d<-GenomicRanges::distanceToNearest(te.genes[x], chrom.GR)
+    d.te<-elementMetadata(d)[1,1]
+    return(c(query, n.te,d.te))
+})
+
+closest.te<-data.frame(matrix(unlist(closest.te), ncol=3, byrow = T))
+
+sample.mean<-mean(unfactor(closest.te[,3]))
+sample.mean
+```
+
+```{r}
+#av.te.proxy<-sapply(seq(1,32548), function(x){
+#    d<-GenomicRanges::distanceToNearest(te.genes[x], chrom.GR)
+ #   d.te<-elementMetadata(d)[1,1]
+  #  print(paste("done", x))
+   # return(d.te)
+#})
+```
+
+```{r}
+full.mean<-mean(av.te.proxy)
+full.mean
+```
+```{r}
+plot(density(unfactor(closest.te[,3])));plot(density(av.te.proxy))
+```
+```{r}
+qqnorm(av.te.proxy);qqline(av.te.proxy, col = 2)
+qqnorm(unfactor(closest.te[,3]));qqline(unfactor(closest.te[,3]), col = 2)
+```
+
+
+```{r}
+t.test(unfactor(closest.te[-10,3]), av.te.proxy, alternative = "two.sided", var.equal = FALSE)
+```
+```{r}
+wilcox.test(unfactor(closest.te[,3]), av.te.proxy)
+```
+```{r}
+ks.test(unfactor(closest.te[,3]), av.te.proxy, alternative = "two.sided")
+```
+```{r}
+ks.test(av.te.proxy, unfactor(closest.te[,3]), alternative = "less")
+```
+
+
+DIGITISED expression
 
 ```{r}
 digitiseDE<-function(diff.frame){
